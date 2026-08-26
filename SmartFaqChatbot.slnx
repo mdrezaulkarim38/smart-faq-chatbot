@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/server/">
+    <Project Path="server/SmartFaqChatbot.Api/SmartFaqChatbot.Api.csproj" />
+    <Project Path="server/SmartFaqChatbot.Core/SmartFaqChatbot.Core.csproj" />
+    <Project Path="server/SmartFaqChatbot.Infrastructure/SmartFaqChatbot.Infrastructure.csproj" />
+  </Folder>
+</Solution>

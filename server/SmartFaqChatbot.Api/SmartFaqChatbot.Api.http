@@ -1,0 +1,6 @@
+@SmartFaqChatbot.Api_HostAddress = http://localhost:5291
+
+GET {{SmartFaqChatbot.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
