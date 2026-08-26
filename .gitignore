@@ -1,0 +1,25 @@
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# Node
+client/node_modules/
+client/dist/
+
+# Docker
+.docker/
+
+# IDE
+.vs/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+**/appsettings.Development.json
+**/*.local.json
