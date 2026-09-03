@@ -1,49 +1,113 @@
+using System.Threading.RateLimiting;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Http.Resilience;
+using Scalar.AspNetCore;
+using Serilog;
+using SmartFaqChatbot.Api.Health;
+using SmartFaqChatbot.Api.Validation;
+using SmartFaqChatbot.Infrastructure;
+using SmartFaqChatbot.Infrastructure.Data;
 
-namespace SmartFaqChatbot.Api;
+var builder = WebApplication.CreateBuilder(args);
 
-public class Program
+builder.Host.UseSerilog((context, config) =>
 {
-    public static void Main(string[] args)
+    config.ReadFrom.Configuration(context.Configuration)
+        .Enrich.FromLogContext()
+        .WriteTo.Console();
+});
+
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 50 * 1024;
+});
+
+builder.Services.AddControllers();
+builder.Services.AddOpenApi();
+
+builder.Services.Configure<ScalarOptions>(options =>
+{
+    options.Title = "Smart FAQ Chatbot API";
+});
+builder.Services.AddEndpointsApiExplorer();
+
+builder.Services.AddFluentValidationAutoValidation();
+builder.Services.AddValidatorsFromAssemblyContaining<ChatRequestValidator>();
+
+builder.Services.AddInfrastructure(builder.Configuration);
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Client", policy =>
     {
-        var builder = WebApplication.CreateBuilder(args);
+        policy.WithOrigins("http://localhost:5173")
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
 
-        // Add services to the container.
-        builder.Services.AddAuthorization();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("fixed", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+});
 
-        // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-        builder.Services.AddOpenApi();
+builder.Services.AddOutputCache();
 
-        var app = builder.Build();
+builder.Services.AddHttpClient("ollama")
+    .AddStandardResilienceHandler(o =>
+    {
+        o.Retry.MaxRetryAttempts = 3;
+        o.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+    });
 
-        // Configure the HTTP request pipeline.
-        if (app.Environment.IsDevelopment())
-        {
-            app.MapOpenApi();
-        }
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>("sqlite")
+    .AddCheck<OllamaHealthCheck>("ollama");
 
-        app.UseHttpsRedirection();
+var app = builder.Build();
 
-        app.UseAuthorization();
-
-        var summaries = new[]
-        {
-            "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-        };
-
-        app.MapGet("/weatherforecast", (HttpContext httpContext) =>
-        {
-            var forecast =  Enumerable.Range(1, 5).Select(index =>
-                new WeatherForecast
-                {
-                    Date = DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-                    TemperatureC = Random.Shared.Next(-20, 55),
-                    Summary = summaries[Random.Shared.Next(summaries.Length)]
-                })
-                .ToArray();
-            return forecast;
-        })
-        .WithName("GetWeatherForecast");
-
-        app.Run();
-    }
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
 }
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+    app.MapScalarApiReference();
+}
+
+app.UseHttpsRedirection();
+app.UseRateLimiter();
+app.UseOutputCache();
+app.UseCors("Client");
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.MapHealthChecks("/health")
+    .AllowAnonymous();
+
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = _ => true
+})
+    .AllowAnonymous();
+
+app.Run();
+
+public partial class Program;
